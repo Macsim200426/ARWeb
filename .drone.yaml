@@ -1,0 +1,60 @@
+kind: pipeline
+type: docker
+name: simple-deploy
+
+steps:
+  - name: build
+    image: maven:3.9.8-eclipse-temurin-21
+    commands:
+      - mvn clean package -DskipTests
+    when:
+      event: [push, tag]
+
+  - name: deploy-files
+    image: appleboy/drone-scp
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_username
+      key:
+        from_secret: ssh_key
+      port: 22
+      target: /opt/app/
+      source:
+        - target/*.jar
+        - Dockerfile
+        - docker-compose.yml
+    when:
+      event: [push, tag]
+    depends_on: [build]
+
+  - name: restart-app
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_username
+      key:
+        from_secret: ssh_key
+      port: 22
+      script:
+        - cd /opt/app
+        - docker build -t my-app:latest .
+        - docker stop my-app || true
+        - docker rm my-app || true
+        - mkdir -p models
+        - docker run -d --name my-app -p 2062:2062 -v /opt/app/models:/app/models my-app:latest
+        - echo "Deployment completed successfully!"
+    when:
+      event: [push, tag]
+    depends_on: [deploy-files]
+
+trigger:
+  branch:
+    - main
+    - master
+  event:
+    - push
+    - tag
