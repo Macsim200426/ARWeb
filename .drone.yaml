@@ -29,40 +29,40 @@ steps:
     depends_on: [build]
 
   - name: install-java
-  image: appleboy/drone-ssh
-  settings:
-    host:
-      from_secret: ssh_host
-    username:
-      from_secret: ssh_user
-    password:
-      from_secret: ssh_password
-    port: 22
-    script:
-      - |
-        echo "=== Fixing repositories and installing Java ==="
-        
-        # Убираем проблемный репозиторий MySQL временно
-        sudo mv /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.list.backup 2>/dev/null || true
-        
-        # Добавляем репозиторий для Java 21
-        sudo apt update
-        sudo apt install -y wget gnupg
-        wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo apt-key add -
-        echo "deb https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" | sudo tee /etc/apt/sources.list.d/adoptium.list
-        
-        # Устанавливаем Java
-        sudo apt update
-        sudo apt install -y temurin-21-jdk
-        
-        # Возвращаем MySQL репозиторий
-        sudo mv /etc/apt/sources.list.d/mysql.list.backup /etc/apt/sources.list.d/mysql.list 2>/dev/null || true
-        
-        java -version
-        echo "Java installation completed!"
-    when:
-      event: [push, tag, custom]
-    depends_on: [copy-jar]
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_user
+      password:
+        from_secret: ssh_password
+      port: 22
+      script:
+        - |
+          echo "=== Fixing repositories and installing Java ==="
+          
+          # Убираем проблемный репозиторий MySQL временно
+          sudo mv /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.list.backup 2>/dev/null || true
+          
+          # Добавляем репозиторий для Java 21
+          sudo apt update
+          sudo apt install -y wget gnupg
+          wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo apt-key add -
+          echo "deb https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" | sudo tee /etc/apt/sources.list.d/adoptium.list
+          
+          # Устанавливаем Java
+          sudo apt update
+          sudo apt install -y temurin-21-jdk
+          
+          # Возвращаем MySQL репозиторий
+          sudo mv /etc/apt/sources.list.d/mysql.list.backup /etc/apt/sources.list.d/mysql.list 2>/dev/null || true
+          
+          java -version
+          echo "Java installation completed!"
+      when:
+        event: [push, tag, custom]
+      depends_on: [copy-jar]
 
   - name: deploy-and-run
     image: appleboy/drone-ssh
