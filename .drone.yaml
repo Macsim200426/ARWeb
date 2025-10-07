@@ -16,9 +16,9 @@ steps:
       host:
         from_secret: ssh_host
       username:
-        from_secret: ssh_user
-      password:
-        from_secret: ssh_password
+        from_secret: ssh_username
+      key:
+        from_secret: ssh_key
       port: 22
       target: /opt/app/
       source:
@@ -34,9 +34,9 @@ steps:
       host:
         from_secret: ssh_host
       username:
-        from_secret: ssh_user
-      password:
-        from_secret: ssh_password
+        from_secret: ssh_username
+      key:
+        from_secret: ssh_key
       port: 22
       script:
         - cd /opt/app
