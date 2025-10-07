@@ -26,7 +26,7 @@ steps:
       target: /opt/app/
       source:
         - target/*.jar
-      strip_components: 0
+      strip_components: 1  # ← Это удалит папку target из пути
     depends_on: [build]
 
   - name: install-java
@@ -83,6 +83,14 @@ steps:
           mkdir -p models logs
           JAR_FILE="ar-webapp-1.0.0.jar"
           echo "Starting: $JAR_FILE"
+          
+          # Проверяем что JAR файл существует
+          if [ ! -f "$JAR_FILE" ]; then
+            echo "❌ JAR file not found: $JAR_FILE"
+            echo "Available files:"
+            ls -la
+            exit 1
+          fi
           
           # Запускаем и сразу проверяем
           nohup java -jar "$JAR_FILE" --server.port=2062 > logs/app.log 2>&1 &
