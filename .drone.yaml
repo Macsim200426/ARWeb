@@ -8,7 +8,7 @@ steps:
     commands:
       - mvn clean package -DskipTests
     when:
-      event: [push, tag]
+      event: [push, tag, custom]  # ← добавил custom
 
   - name: copy-jar
     image: appleboy/drone-scp
@@ -24,7 +24,7 @@ steps:
       source:
         - target/*.jar
     when:
-      event: [push, tag]
+      event: [push, tag, custom]  # ← добавил custom
     depends_on: [build]
 
   - name: deploy-and-run
@@ -39,30 +39,18 @@ steps:
       port: 22
       script:
         - cd /opt/app
-        # Останавливаем старую версию
-        - echo "Stopping existing application..."
         - pkill -f "java -jar.*viewing" || true
         - sleep 5
-        # Создаем необходимые директории
-        - mkdir -p models
-        - mkdir -p logs
-        - mkdir -p config
-        # Находим последний JAR файл
+        - mkdir -p models logs
         - JAR_FILE=$(ls -t *.jar | head -1)
         - echo "Starting application: $JAR_FILE"
-        # Запускаем приложение
         - nohup java -jar $JAR_FILE --server.port=2062 > logs/app.log 2>&1 &
-        - echo "Waiting for application to start..."
         - sleep 10
-        # Проверяем что приложение запустилось
         - ps aux | grep java
-        - echo "Application logs:"
         - tail -30 logs/app.log
-        - echo "Checking if application is responding..."
-        - curl -f http://localhost:2062/actuator/health || echo "Health check failed, but continuing..."
         - echo "Deployment completed!"
     when:
-      event: [push, tag]
+      event: [push, tag, custom]  # ← добавил custom
     depends_on: [copy-jar]
 
 trigger:
@@ -72,3 +60,4 @@ trigger:
   event:
     - push
     - tag
+    - custom  # ← добавил custom
