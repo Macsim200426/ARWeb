@@ -29,7 +29,7 @@ steps:
       strip_components: 1
     depends_on: [build]
 
-  - name: debug-setup
+  - name: emergency-cleanup
     image: appleboy/drone-ssh
     settings:
       host:
@@ -41,21 +41,22 @@ steps:
       port: 22
       script:
         - |
-          echo "=== Debug: Server Environment ==="
-          cd /opt/app
-          echo "Java version:"
-          java -version
-          echo "Memory:"
-          free -h
-          echo "Disk space:"
+          echo "=== EMERGENCY DISK CLEANUP ==="
+          echo "Current disk usage:"
           df -h
-          echo "JAR file details:"
-          ls -la *.jar
-          echo "JAR contents (first level):"
-          jar tf ar-webapp-1.0.0.jar | head -20 || echo "Cannot inspect JAR"
+          
+          # Быстрая очистка
+          sudo docker system prune -af || echo "Docker cleanup skipped"
+          sudo apt clean
+          sudo journalctl --vacuum-time=1d
+          sudo rm -rf /var/log/*.gz /var/log/*.old
+          sudo find /tmp -type f -atime +1 -delete 2>/dev/null || true
+          
+          echo "Disk after emergency cleanup:"
+          df -h
     depends_on: [copy-jar]
 
-  - name: test-run-manual
+  - name: deploy-minimal
     image: appleboy/drone-ssh
     settings:
       host:
@@ -67,80 +68,38 @@ steps:
       port: 22
       script:
         - |
-          echo "=== Testing manual application run ==="
-          cd /opt/app
-          
-          # Останавливаем всё
-          pkill -f "java.*jar" || true
-          sleep 3
-          
-          # Создаем директории
-          mkdir -p models logs
-          
-          # Запускаем вручную (не в фоне) чтобы видеть ошибки
-          echo "Starting application in foreground..."
-          timeout 30s java -jar ar-webapp-1.0.0.jar --server.port=2062 2>&1 | tee logs/startup.log || echo "Application exited"
-          
-          echo "=== Startup log ==="
-          cat logs/startup.log
-          
-          # Проверяем есть ли процессы
-          echo "=== Java processes after manual start ==="
-          ps aux | grep java | grep -v grep || echo "No Java processes"
-    depends_on: [debug-setup]
-
-  - name: deploy-final
-    image: appleboy/drone-ssh
-    settings:
-      host:
-        from_secret: ssh_host
-      username:
-        from_secret: ssh_user
-      password:
-        from_secret: ssh_password
-      port: 22
-      script:
-        - |
-          echo "=== Final deployment attempt ==="
+          echo "=== Deploying with minimal resources ==="
           cd /opt/app
           
           # Останавливаем всё
           pkill -f "java.*jar" || true
           sleep 5
           
-          # Проверяем что ничего не работает
-          if pgrep -f "java.*jar" > /dev/null; then
-            echo "⚠️  Some Java processes still running, forcing kill"
-            pkill -9 -f "java.*jar" || true
-            sleep 2
-          fi
+          # Создаем минимальные директории
+          mkdir -p models logs
           
-          # Запускаем с подробным логированием
+          # Запускаем с абсолютным минимумом памяти
           echo "Starting application..."
-          nohup java -jar ar-webapp-1.0.0.jar --server.port=2062 > logs/app.log 2>&1 &
+          nohup java -Xms32m -Xmx128m -jar ar-webapp-1.0.0.jar --server.port=2062 > logs/app.log 2>&1 &
           APP_PID=$!
-          echo "Started with PID: $APP_PID"
+          echo "PID: $APP_PID"
           
-          # Ждем и проверяем
-          for i in {1..10}; do
-            if ps -p $APP_PID > /dev/null; then
-              echo "✅ Application still running after $(($i*3)) seconds"
-              sleep 3
-            else
-              echo "❌ Application died after $(($i*3)) seconds"
-              echo "=== Last 50 lines of log ==="
-              tail -50 logs/app.log
-              exit 1
-            fi
-          done
+          # Даем больше времени на запуск из-за нехватки места
+          sleep 30
           
-          echo "=== Final check ==="
-          echo "Java processes:"
-          ps aux | grep java | grep -v grep
-          echo "Port 2062:"
-          netstat -tlnp | grep 2062 || echo "Port not listening"
-          echo "Logs:"
-          tail -20 logs/app.log
-          
-          echo "🎉 Deployment successful!"
-    depends_on: [test-run-manual]
+          if ps -p $APP_PID > /dev/null; then
+            echo "✅ SUCCESS: Application running!"
+            echo "Memory usage:"
+            ps -p $APP_PID -o pid,vsz,rss,pcpu,comm
+            echo "Final disk status:"
+            df -h
+          else
+            echo "❌ FAILED: Application died"
+            echo "=== Last 100 lines of logs ==="
+            tail -100 logs/app.log
+            echo "=== Checking system resources ==="
+            free -h
+            df -h
+            exit 1
+          fi
+    depends_on: [emergency-cleanup]
