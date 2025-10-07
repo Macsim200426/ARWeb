@@ -1,6 +1,6 @@
 kind: pipeline
 type: docker
-name: simple-deploy
+name: direct-deploy
 
 steps:
   - name: build
@@ -10,7 +10,7 @@ steps:
     when:
       event: [push, tag]
 
-  - name: deploy-files
+  - name: copy-jar
     image: appleboy/drone-scp
     settings:
       host:
@@ -23,13 +23,11 @@ steps:
       target: /opt/app/
       source:
         - target/*.jar
-        - Dockerfile
-        - docker-compose.yml
     when:
       event: [push, tag]
     depends_on: [build]
 
-  - name: restart-app
+  - name: deploy-and-run
     image: appleboy/drone-ssh
     settings:
       host:
@@ -41,15 +39,31 @@ steps:
       port: 22
       script:
         - cd /opt/app
-        - docker build -t my-app:latest .
-        - docker stop my-app || true
-        - docker rm my-app || true
+        # Останавливаем старую версию
+        - echo "Stopping existing application..."
+        - pkill -f "java -jar.*viewing" || true
+        - sleep 5
+        # Создаем необходимые директории
         - mkdir -p models
-        - docker run -d --name my-app -p 2062:2062 -v /opt/app/models:/app/models my-app:latest
-        - echo "Deployment completed successfully!"
+        - mkdir -p logs
+        - mkdir -p config
+        # Находим последний JAR файл
+        - JAR_FILE=$(ls -t *.jar | head -1)
+        - echo "Starting application: $JAR_FILE"
+        # Запускаем приложение
+        - nohup java -jar $JAR_FILE --server.port=2062 > logs/app.log 2>&1 &
+        - echo "Waiting for application to start..."
+        - sleep 10
+        # Проверяем что приложение запустилось
+        - ps aux | grep java
+        - echo "Application logs:"
+        - tail -30 logs/app.log
+        - echo "Checking if application is responding..."
+        - curl -f http://localhost:2062/actuator/health || echo "Health check failed, but continuing..."
+        - echo "Deployment completed!"
     when:
       event: [push, tag]
-    depends_on: [deploy-files]
+    depends_on: [copy-jar]
 
 trigger:
   branch:
