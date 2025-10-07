@@ -28,6 +28,30 @@ steps:
       event: [push, tag, custom]
     depends_on: [build]
 
+  - name: install-java
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_user
+      password:
+        from_secret: ssh_password
+      port: 22
+      script:
+        - |
+          echo "=== Installing Java 21 ==="
+          # Для Ubuntu/Debian
+          sudo apt update
+          sudo apt install -y openjdk-21-jdk
+          
+          # Проверяем установку
+          java -version
+          echo "Java installation completed!"
+    when:
+      event: [push, tag, custom]
+    depends_on: [copy-jar]
+
   - name: deploy-and-run
     image: appleboy/drone-ssh
     settings:
@@ -39,24 +63,25 @@ steps:
         from_secret: ssh_password
       port: 22
       script:
-        - cd /opt/app
-        - echo "Stopping existing application..."
-        - pkill -f "java -jar" || true
-        - sleep 3
-        - mkdir -p models logs
-        - JAR_FILE=$(ls -t *.jar | head -1)
-        - echo "Starting application: $JAR_FILE"
-        - nohup java -jar $JAR_FILE --server.port=2062 > logs/app.log 2>&1 &
-        - echo "Waiting for application to start..."
-        - sleep 10
-        - echo "Application status:"
-        - ps aux | grep java | grep -v grep
-        - echo "Recent logs:"
-        - tail -20 logs/app.log
-        - echo "Deployment completed successfully!"
+        - |
+          cd /opt/app
+          echo "Stopping existing application..."
+          pkill -f "java -jar" || true
+          sleep 3
+          mkdir -p models logs
+          JAR_FILE=$(ls -t *.jar | head -1)
+          echo "Starting application: $JAR_FILE"
+          nohup java -jar "$JAR_FILE" --server.port=2062 > logs/app.log 2>&1 &
+          echo "Waiting for application to start..."
+          sleep 10
+          echo "Application status:"
+          ps aux | grep java | grep -v grep
+          echo "Recent logs:"
+          tail -20 logs/app.log
+          echo "Deployment completed successfully!"
     when:
       event: [push, tag, custom]
-    depends_on: [copy-jar]
+    depends_on: [install-java]
 
 trigger:
   branch:
