@@ -26,10 +26,10 @@ steps:
       target: /opt/app/
       source:
         - target/*.jar
-      strip_components: 1  # ← Это удалит папку target из пути
+      strip_components: 1
     depends_on: [build]
 
-  - name: install-java
+  - name: debug-setup
     image: appleboy/drone-ssh
     settings:
       host:
@@ -41,20 +41,21 @@ steps:
       port: 22
       script:
         - |
-          echo "=== Installing Java ==="
-          sudo apt update
-          sudo apt install -y wget
-          cd /tmp
-          wget -q https://download.java.net/java/GA/jdk21/fd2272bbf8e04c3dbaee13770090416c/35/GPL/openjdk-21_linux-x64_bin.tar.gz
-          sudo tar -xzf openjdk-21_linux-x64_bin.tar.gz -C /opt
-          sudo ln -sf /opt/jdk-21 /opt/java
-          echo 'export JAVA_HOME=/opt/java' >> ~/.bashrc
-          echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.bashrc
-          source ~/.bashrc
-          /opt/java/bin/java -version
+          echo "=== Debug: Server Environment ==="
+          cd /opt/app
+          echo "Java version:"
+          java -version
+          echo "Memory:"
+          free -h
+          echo "Disk space:"
+          df -h
+          echo "JAR file details:"
+          ls -la *.jar
+          echo "JAR contents (first level):"
+          jar tf ar-webapp-1.0.0.jar | head -20 || echo "Cannot inspect JAR"
     depends_on: [copy-jar]
 
-  - name: deploy-and-run
+  - name: test-run-manual
     image: appleboy/drone-ssh
     settings:
       host:
@@ -66,55 +67,80 @@ steps:
       port: 22
       script:
         - |
-          # Обновляем PATH
-          export JAVA_HOME=/opt/java
-          export PATH=$JAVA_HOME/bin:$PATH
-          source ~/.bashrc
-          
+          echo "=== Testing manual application run ==="
           cd /opt/app
-          echo "=== Checking files ==="
-          ls -la
           
-          echo "=== Stopping existing application ==="
-          pkill -f "java -jar.*ar-webapp" || true
+          # Останавливаем всё
+          pkill -f "java.*jar" || true
+          sleep 3
+          
+          # Создаем директории
+          mkdir -p models logs
+          
+          # Запускаем вручную (не в фоне) чтобы видеть ошибки
+          echo "Starting application in foreground..."
+          timeout 30s java -jar ar-webapp-1.0.0.jar --server.port=2062 2>&1 | tee logs/startup.log || echo "Application exited"
+          
+          echo "=== Startup log ==="
+          cat logs/startup.log
+          
+          # Проверяем есть ли процессы
+          echo "=== Java processes after manual start ==="
+          ps aux | grep java | grep -v grep || echo "No Java processes"
+    depends_on: [debug-setup]
+
+  - name: deploy-final
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_user
+      password:
+        from_secret: ssh_password
+      port: 22
+      script:
+        - |
+          echo "=== Final deployment attempt ==="
+          cd /opt/app
+          
+          # Останавливаем всё
+          pkill -f "java.*jar" || true
           sleep 5
           
-          echo "=== Starting new application ==="
-          mkdir -p models logs
-          JAR_FILE="ar-webapp-1.0.0.jar"
-          echo "Starting: $JAR_FILE"
-          
-          # Проверяем что JAR файл существует
-          if [ ! -f "$JAR_FILE" ]; then
-            echo "❌ JAR file not found: $JAR_FILE"
-            echo "Available files:"
-            ls -la
-            exit 1
+          # Проверяем что ничего не работает
+          if pgrep -f "java.*jar" > /dev/null; then
+            echo "⚠️  Some Java processes still running, forcing kill"
+            pkill -9 -f "java.*jar" || true
+            sleep 2
           fi
           
-          # Запускаем и сразу проверяем
-          nohup java -jar "$JAR_FILE" --server.port=2062 > logs/app.log 2>&1 &
+          # Запускаем с подробным логированием
+          echo "Starting application..."
+          nohup java -jar ar-webapp-1.0.0.jar --server.port=2062 > logs/app.log 2>&1 &
           APP_PID=$!
-          echo "App PID: $APP_PID"
+          echo "Started with PID: $APP_PID"
           
-          # Даем время на запуск
-          sleep 15
+          # Ждем и проверяем
+          for i in {1..10}; do
+            if ps -p $APP_PID > /dev/null; then
+              echo "✅ Application still running after $(($i*3)) seconds"
+              sleep 3
+            else
+              echo "❌ Application died after $(($i*3)) seconds"
+              echo "=== Last 50 lines of log ==="
+              tail -50 logs/app.log
+              exit 1
+            fi
+          done
           
-          echo "=== Checking if app is running ==="
-          if ps -p $APP_PID > /dev/null; then
-            echo "✅ Application is running with PID: $APP_PID"
-          else
-            echo "❌ Application failed to start"
-            echo "=== Checking logs ==="
-            cat logs/app.log || echo "No logs found"
-            exit 1
-          fi
+          echo "=== Final check ==="
+          echo "Java processes:"
+          ps aux | grep java | grep -v grep
+          echo "Port 2062:"
+          netstat -tlnp | grep 2062 || echo "Port not listening"
+          echo "Logs:"
+          tail -20 logs/app.log
           
-          echo "=== Checking port 2062 ==="
-          netstat -tlnp | grep 2062 || echo "Port 2062 not listening"
-          
-          echo "=== Recent logs ==="
-          tail -30 logs/app.log
-          
-          echo "🎉 Deployment completed successfully!"
-    depends_on: [install-java]
+          echo "🎉 Deployment successful!"
+    depends_on: [test-run-manual]
