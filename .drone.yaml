@@ -7,8 +7,6 @@ steps:
     image: maven:3.9.8-eclipse-temurin-21
     commands:
       - mvn clean package -DskipTests
-    when:
-      event: [push, tag, custom]
 
   - name: copy-jar
     image: appleboy/drone-scp
@@ -24,8 +22,6 @@ steps:
       source:
         - target/*.jar
       strip_components: 0
-    when:
-      event: [push, tag, custom]
     depends_on: [build]
 
   - name: install-java
@@ -40,29 +36,18 @@ steps:
       port: 22
       script:
         - |
-          echo "=== Fixing repositories and installing Java ==="
-          
-          # Убираем проблемный репозиторий MySQL временно
-          sudo mv /etc/apt/sources.list.d/mysql.list /etc/apt/sources.list.d/mysql.list.backup 2>/dev/null || true
-          
-          # Добавляем репозиторий для Java 21
+          echo "=== Installing Java ==="
           sudo apt update
-          sudo apt install -y wget gnupg
-          wget -O - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo apt-key add -
-          echo "deb https://packages.adoptium.net/artifactory/deb $(awk -F= '/^VERSION_CODENAME/{print$2}' /etc/os-release) main" | sudo tee /etc/apt/sources.list.d/adoptium.list
-          
-          # Устанавливаем Java
-          sudo apt update
-          sudo apt install -y temurin-21-jdk
-          
-          # Возвращаем MySQL репозиторий
-          sudo mv /etc/apt/sources.list.d/mysql.list.backup /etc/apt/sources.list.d/mysql.list 2>/dev/null || true
-          
-          java -version
-          echo "Java installation completed!"
-      when:
-        event: [push, tag, custom]
-      depends_on: [copy-jar]
+          sudo apt install -y wget
+          cd /tmp
+          wget -q https://download.java.net/java/GA/jdk21/fd2272bbf8e04c3dbaee13770090416c/35/GPL/openjdk-21_linux-x64_bin.tar.gz
+          sudo tar -xzf openjdk-21_linux-x64_bin.tar.gz -C /opt
+          sudo ln -sf /opt/jdk-21 /opt/java
+          echo 'export JAVA_HOME=/opt/java' >> ~/.bashrc
+          echo 'export PATH=$JAVA_HOME/bin:$PATH' >> ~/.bashrc
+          source ~/.bashrc
+          /opt/java/bin/java -version
+    depends_on: [copy-jar]
 
   - name: deploy-and-run
     image: appleboy/drone-ssh
@@ -76,30 +61,51 @@ steps:
       port: 22
       script:
         - |
+          # Обновляем PATH
+          export JAVA_HOME=/opt/java
+          export PATH=$JAVA_HOME/bin:$PATH
+          source ~/.bashrc
+          
           cd /opt/app
-          echo "Stopping existing application..."
-          pkill -f "java -jar" || true
-          sleep 3
+          echo "=== Checking files ==="
+          ls -la
+          
+          echo "=== Stopping existing application ==="
+          pkill -f "java -jar.*ar-webapp" || true
+          sleep 5
+          
+          echo "=== Starting new application ==="
           mkdir -p models logs
-          JAR_FILE=$(ls -t *.jar | head -1)
-          echo "Starting application: $JAR_FILE"
+          JAR_FILE="ar-webapp-1.0.0.jar"
+          echo "Starting: $JAR_FILE"
+          
+          # Запускаем и сразу проверяем
           nohup java -jar "$JAR_FILE" --server.port=2062 > logs/app.log 2>&1 &
-          echo "Waiting for application to start..."
-          sleep 10
-          echo "Application status:"
-          ps aux | grep java | grep -v grep
-          echo "Recent logs:"
-          tail -20 logs/app.log
-          echo "Deployment completed successfully!"
-    when:
-      event: [push, tag, custom]
+          APP_PID=$!
+          echo "App PID: $APP_PID"
+          
+          # Даем время на запуск
+          sleep 15
+          
+          echo "=== Checking if app is running ==="
+          if ps -p $APP_PID > /dev/null; then
+            echo "✅ Application is running with PID: $APP_PID"
+          else
+            echo "❌ Application failed to start"
+            echo "=== Checking logs ==="
+            cat logs/app.log || echo "No logs found"
+            exit 1
+          fi
+          
+          echo "=== Checking port 2062 ==="
+          netstat -tlnp | grep 2062 || echo "Port 2062 not listening"
+          
+          echo "=== Recent logs ==="
+          tail -30 logs/app.log
+          
+          echo "🎉 Deployment completed successfully!"
     depends_on: [install-java]
 
 trigger:
-  branch:
-    - main
-    - master
-  event:
-    - push
-    - tag
-    - custom
+  branch: [main, master]
+  event: [push, pull_request, tag]
