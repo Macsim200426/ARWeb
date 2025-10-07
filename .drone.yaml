@@ -2,6 +2,11 @@ kind: pipeline
 type: docker
 name: direct-deploy
 
+trigger:
+  branch:
+    - main
+    - master
+
 steps:
   - name: build
     image: maven:3.9.8-eclipse-temurin-21
@@ -105,7 +110,3 @@ steps:
           
           echo "🎉 Deployment completed successfully!"
     depends_on: [install-java]
-
-trigger:
-  branch: [main, master]
-  event: [push, pull_request, tag]
