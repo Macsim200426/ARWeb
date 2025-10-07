@@ -29,7 +29,7 @@ steps:
       strip_components: 1
     depends_on: [build]
 
-  - name: emergency-cleanup
+  - name: nuclear-cleanup
     image: appleboy/drone-ssh
     settings:
       host:
@@ -41,22 +41,43 @@ steps:
       port: 22
       script:
         - |
-          echo "=== EMERGENCY DISK CLEANUP ==="
-          echo "Current disk usage:"
+          echo "=== NUCLEAR DISK CLEANUP ==="
+          echo "BEFORE CLEANUP:"
           df -h
           
-          # Быстрая очистка
-          sudo docker system prune -af || echo "Docker cleanup skipped"
+          # ЖЕСТКАЯ очистка Docker
+          echo "Cleaning Docker aggressively..."
+          sudo docker system prune -af || echo "Docker not available"
+          sudo docker volume prune -f || echo "No docker volumes"
+          
+          # Очистка системных логов
+          echo "Cleaning system logs..."
+          sudo journalctl --vacuum-time=1h
+          sudo find /var/log -name "*.log" -type f -exec truncate -s 0 {} \; 2>/dev/null || true
+          
+          # Очистка временных файлов
+          echo "Cleaning temp files..."
+          sudo rm -rf /tmp/*
+          sudo rm -rf /var/tmp/*
+          
+          # Очистка кэша пакетов
+          echo "Cleaning package cache..."
           sudo apt clean
-          sudo journalctl --vacuum-time=1d
-          sudo rm -rf /var/log/*.gz /var/log/*.old
-          sudo find /tmp -type f -atime +1 -delete 2>/dev/null || true
+          sudo apt autoremove -y --purge
           
-          echo "Disk after emergency cleanup:"
+          # Очистка старых логов приложения
+          echo "Cleaning app logs..."
+          sudo find /opt/app -name "*.log" -type f -delete 2>/dev/null || true
+          
+          echo "AFTER CLEANUP:"
           df -h
+          
+          # Проверяем сколько места освободилось
+          echo "Available space:"
+          df -h /opt/app
     depends_on: [copy-jar]
 
-  - name: deploy-minimal
+  - name: check-if-we-have-space
     image: appleboy/drone-ssh
     settings:
       host:
@@ -68,38 +89,73 @@ steps:
       port: 22
       script:
         - |
-          echo "=== Deploying with minimal resources ==="
+          echo "=== CHECKING IF WE HAVE ENOUGH SPACE ==="
+          df -h
+          
+          # Проверяем свободное место в мегабайтах
+          FREE_SPACE=$(df /opt/app | awk 'NR==2 {print $4}')
+          echo "Free space: ${FREE_SPACE}KB"
+          
+          # Если меньше 1GB - критично
+          if [ "$FREE_SPACE" -lt 1000000 ]; then
+            echo "❌ CRITICAL: Still less than 1GB free space!"
+            echo "Need to manually clean up more space"
+            exit 1
+          else
+            echo "✅ Enough space available"
+          fi
+    depends_on: [nuclear-cleanup]
+
+  - name: deploy-with-extreme-measures
+    image: appleboy/drone-ssh
+    settings:
+      host:
+        from_secret: ssh_host
+      username:
+        from_secret: ssh_user
+      password:
+        from_secret: ssh_password
+      port: 22
+      script:
+        - |
+          echo "=== DEPLOYING WITH EXTREME MEASURES ==="
           cd /opt/app
           
-          # Останавливаем всё
-          pkill -f "java.*jar" || true
+          # Жесткая остановка ВСЕХ Java процессов
+          echo "Killing all Java processes..."
+          sudo pkill -9 -f java || true
           sleep 5
           
-          # Создаем минимальные директории
-          mkdir -p models logs
-          
-          # Запускаем с абсолютным минимумом памяти
-          echo "Starting application..."
-          nohup java -Xms32m -Xmx128m -jar ar-webapp-1.0.0.jar --server.port=2062 > logs/app.log 2>&1 &
-          APP_PID=$!
-          echo "PID: $APP_PID"
-          
-          # Даем больше времени на запуск из-за нехватки места
-          sleep 30
-          
-          if ps -p $APP_PID > /dev/null; then
-            echo "✅ SUCCESS: Application running!"
-            echo "Memory usage:"
-            ps -p $APP_PID -o pid,vsz,rss,pcpu,comm
-            echo "Final disk status:"
-            df -h
-          else
-            echo "❌ FAILED: Application died"
-            echo "=== Last 100 lines of logs ==="
-            tail -100 logs/app.log
-            echo "=== Checking system resources ==="
-            free -h
-            df -h
+          # Проверяем что ничего не осталось
+          if pgrep -f java > /dev/null; then
+            echo "❌ Java processes still running, cannot continue"
+            ps aux | grep java
             exit 1
           fi
-    depends_on: [emergency-cleanup]
+          
+          # Запускаем с абсолютным минимумом
+          echo "Starting application with bare minimum..."
+          java -Xms16m -Xmx64m -jar ar-webapp-1.0.0.jar --server.port=2062 &
+          APP_PID=$!
+          echo "App PID: $APP_PID"
+          
+          # Мониторим каждую секунду
+          for i in {1..60}; do
+            if ps -p $APP_PID > /dev/null; then
+              echo "✅ Still running after $i seconds"
+              sleep 1
+            else
+              echo "❌ DIED after $i seconds"
+              echo "=== Checking why it died ==="
+              
+              # Пробуем запустить с выводом ошибок в консоль
+              echo "=== Trying to run with error output ==="
+              java -Xms16m -Xmx64m -jar ar-webapp-1.0.0.jar --server.port=2062 2>&1 | head -100
+              exit 1
+            fi
+          done
+          
+          echo "🎉 SUCCESS! Application running for 60 seconds"
+          echo "Process info:"
+          ps -p $APP_PID -o pid,vsz,rss,pcpu,comm
+    depends_on: [check-if-we-have-space]
