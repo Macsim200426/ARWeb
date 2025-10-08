@@ -8,88 +8,33 @@ trigger:
     - master
 
 steps:
-  - name: build
+  - name: build-jar
     image: maven:3.9.8-eclipse-temurin-21
     commands:
       - mvn clean package -DskipTests
 
-  - name: copy-jar
+  - name: copy-files
     image: appleboy/drone-scp
     settings:
-      host:
-        from_secret: ssh_host
-      username:
-        from_secret: ssh_user
-      password:
-        from_secret: ssh_password
-      port: 22
-      target: /opt/app/
+      host: {from_secret: ssh_host}
+      username: {from_secret: ssh_user}
+      password: {from_secret: ssh_password}
       source:
         - target/*.jar
-      strip_components: 1
-    depends_on: [build]
+        - Dockerfile
+      target: /opt/app/
 
-  - name: debug-application
+  - name: deploy
     image: appleboy/drone-ssh
     settings:
-      host:
-        from_secret: ssh_host
-      username:
-        from_secret: ssh_user
-      password:
-        from_secret: ssh_password
-      port: 22
+      host: {from_secret: ssh_host}
+      username: {from_secret: ssh_user}
+      password: {from_secret: ssh_password}
       script:
         - |
-          echo "=== DEPLOYING APPLICATION ==="
           cd /opt/app
-          
-         
-          
-          # Проверяем, что JAR файл существует
-          echo "Checking JAR file..."
-          ls -la *.jar
-          
-          # Запускаем приложение в фоновом режиме с логированием
-          echo "Starting application in background..."
-          nohup java -Xmx512m -jar *.jar --server.port=2062 > application.log 2>&1 &
-          
-          # Сохраняем PID для возможного последующего использования
-          echo $! > application.pid
-          
-          # Ждем запуска приложения
-          echo "Waiting for application to start..."
-          sleep 15
-          
-          # Проверяем, что процесс запущен
-          echo "Checking if application is running..."
-          if ps -p $(cat application.pid) > /dev/null; then
-            echo "✅ Application is running with PID: $(cat application.pid)"
-          else
-            echo "❌ Application failed to start"
-            echo "=== Application log ==="
-            cat application.log
-            exit 1
-          fi
-          
-          # Проверяем, что порт слушается
-          echo "Checking if port 2062 is listening..."
-          if netstat -tulpn | grep 2062; then
-            echo "✅ Port 2062 is listening"
-          else
-            echo "❌ Port 2062 is not listening"
-            exit 1
-          fi
-          
-          # Проверяем HTTP доступность (с таймаутом)
-          echo "Testing HTTP access..."
-          if curl -f --connect-timeout 10 http://localhost:2062/; then
-            echo "✅ Application is responding to HTTP requests"
-          else
-            echo "⚠️ Application started but HTTP check failed"
-            echo "=== Application log ==="
-            tail -50 application.log
-          fi
-          
-          echo "=== DEPLOYMENT COMPLETED SUCCESSFULLY ==="
+          docker build -t ar-webapp:1.1.0 .
+          docker stop ar-webapp:1.1.0 || true
+          docker rm ar-webapp:1.1.0 || true
+          docker run -d --name ar-webapp:1.1.0 -p 2062:2062 ar-webapp:1.1.0
     depends_on: [copy-jar]
