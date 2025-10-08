@@ -46,7 +46,7 @@ steps:
           
           # Останавливаем существующее приложение
           echo "Stopping any existing application..."
-          pkill -f "java.*ar-webapp" || true
+          pkill -f "ar-webapp-1.0.0.jar" || echo "No previous version found"
           sleep 5
           
           # Проверяем, что JAR файл существует
