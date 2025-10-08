@@ -38,4 +38,4 @@ steps:
           sleep 5
           docker rm ar-webapp:1.1.0 || true
           sleep 5
-          docker run -d --name ar-webapp -p 2063:2063 ar-webapp:1.1.0
+          docker run -d --name ar-webapp -p 2062:2062 ar-webapp:1.1.0
