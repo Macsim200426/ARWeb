@@ -11,6 +11,7 @@ steps:
   - name: build-jar
     image: maven:3.9.8-eclipse-temurin-21
     commands:
+      - cd ${DRONE_WORKSPACE}
       - mvn clean package -DskipTests
 
   - name: copy-files
