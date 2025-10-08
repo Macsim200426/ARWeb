@@ -1,5 +1,5 @@
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY *.jar app.jar
-EXPOSE 2062
+EXPOSE 2063
 ENTRYPOINT ["java", "-jar", "app.jar"]
