@@ -36,4 +36,4 @@ steps:
           docker build -t ar-webapp:1.1.0 .
           docker stop ar-webapp:1.1.0 || true
           docker rm ar-webapp:1.1.0 || true
-          docker run -d --name ar-webapp:1.1.0 -p 2062:2062 ar-webapp:1.1.0
+          docker run -d --name ar-webapp -p 2062:2062 ar-webapp:1.1.0
